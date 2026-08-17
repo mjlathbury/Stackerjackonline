@@ -219,63 +219,31 @@
   
   function placeSplash() {
     const t = topBlock(), c = current;
-    
-    // Slower speed for demo
     speed = 1.6;
 
-    // Find highest score from scoreToPlayer or default to 15-20 as target height
-    let targetHeight = 15;
-    const scores = Object.keys(scoreToPlayer).map(s => parseInt(s, 10)).filter(s => !isNaN(s));
-    if (scores.length > 0) {
-      targetHeight = Math.max(...scores);
-    }
-
-    // Calculate gradual trimming so width reduces slowly as it climbs toward targetHeight
-    const currentHeight = stack.length;
-    let targetWidth = t.width;
-    if (currentHeight < targetHeight) {
-      // Reduce width proportionally to reach ~min width (e.g. 80px) at targetHeight
-      const reduction = (baseWidth - 80) / targetHeight;
-      targetWidth = Math.max(80, baseWidth - (currentHeight * reduction));
-    }
-
-    // Position current block so it cuts off a piece to match targetWidth
-    // We want the overlap width to be targetWidth
-    const maxOffset = (t.width - targetWidth);
-    const offsetAmt = maxOffset > 0 ? (Math.random() * maxOffset * 0.5 + maxOffset * 0.25) : 0;
-    
-    if (c.dir === 1) {
-      c.x = t.x + offsetAmt;
-    } else {
-      c.x = (t.x + t.width) - targetWidth - offsetAmt;
-    }
-    c.width = t.width; // keep full width moving, overlap will trim
-
+    // Simpler, robust demo stacking logic
     const oStart = Math.max(c.x, t.x);
     const oEnd   = Math.min(c.x + c.width, t.x + t.width);
     const oW     = oEnd - oStart;
     const slot   = stack.length * BLOCK_H;
 
-    if (oW <= 0 || currentHeight >= targetHeight + 2) { 
+    if (oW <= 0 || stack.length > 20) {
       reset();
       state = 'splash';
       return;
     }
 
     nextDir *= -1;
-    const nx = oStart;
-    const nw = oW;
+    const delta = c.width - oW;
+    let nx, nw;
 
-    // Create falling debris for cut off pieces!
-    if (c.x < oStart) {
-      debris.push({ x: c.x, y: slot, w: oStart - c.x, h: BLOCK_H,
-                    vx: -2.0 - Math.random(), vy: 2.0, rot: 0,
-                    vr: -(Math.random() * 0.1 + 0.02), hue: c.hue });
-    }
-    if (c.x + c.width > oEnd) {
-      debris.push({ x: oEnd, y: slot, w: (c.x + c.width) - oEnd, h: BLOCK_H,
-                    vx: 2.0 + Math.random(), vy: 2.0, rot: 0,
-                    vr: (Math.random() * 0.1 + 0.02), hue: c.hue });
+    // Occasionally create a slight miss/trim so it's not 100% rigid
+    if (Math.random() < 0.3 && c.width > 60) {
+      nx = oStart + 2;
+      nw = oW - 4;
+    } else {
+      nx = oStart;
+      nw = oW;
     }
 
     stack.push({ x: nx, width: nw, hue: c.hue });
