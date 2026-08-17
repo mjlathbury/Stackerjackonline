@@ -216,6 +216,36 @@
     };
   }
 
+  
+  function placeSplash() {
+    const t = topBlock(), c = current;
+    const oStart = Math.max(c.x, t.x);
+    const oEnd   = Math.min(c.x + c.width, t.x + t.width);
+    const oW     = oEnd - oStart;
+    const slot   = stack.length * BLOCK_H;
+
+    if (oW <= 0 || stack.length > 15) { // reset demo stack if too high or missed
+      reset();
+      state = 'splash';
+      return;
+    }
+
+    nextDir *= -1;
+    const delta = c.width - oW;
+    let nx, nw;
+
+    if (delta <= 6) { 
+      nx = t.x; nw = t.width;
+    } else {
+      nx = oStart; nw = oW;
+    }
+
+    stack.push({ x: nx, width: nw, hue: c.hue });
+    score++;
+    speed = Math.min(2.4 + score * 0.16, 7.5);
+    spawnCurrent();
+  }
+
   function place() {
     const t = topBlock(), c = current;
     const oStart = Math.max(c.x, t.x);
@@ -287,11 +317,21 @@
     if (target < 0) target = 0;
     offset += (target - offset) * 0.12;
 
-    if (state === 'playing' && current) {
+    if ((state === 'playing' || state === 'splash') && current) {
       current.x += current.dir * speed;
       const minX = 10, maxX = W - 10 - current.width;
       if (current.x <= minX) { current.x = minX; current.dir = 1; }
       else if (current.x >= maxX) { current.x = maxX; current.dir = -1; }
+      
+      // If in splash mode, auto-place blocks to show a running demo!
+      if (state === 'splash') {
+        const t = topBlock();
+        // Place when aligned roughly over the top block with some AI tolerance
+        const targetX = t.x + (t.width - current.width) / 2;
+        if (Math.abs(current.x - targetX) < speed * 1.2 || (current.dir === 1 && current.x >= targetX) || (current.dir === -1 && current.x <= targetX)) {
+          placeSplash();
+        }
+      }
     }
 
     for (let i = debris.length - 1; i >= 0; i--) {
@@ -310,6 +350,20 @@
       if (f.life <= 0) floaters.splice(i, 1);
     }
     if (shake > 0) shake *= 0.9;
+
+    if (state === 'countdown') {
+      const elapsed = performance.now() - countdownStartTime;
+      if (elapsed > 3000) {
+        state = 'playing';
+      } else if (elapsed > 2000) {
+        countdownVal = 1;
+      } else if (elapsed > 1000) {
+        countdownVal = 2;
+      } else {
+        countdownVal = 3;
+      }
+    }
+
   }
 
   // ---- Draw ----
@@ -413,28 +467,53 @@
 
   function drawUI() {
     ctx.textAlign = 'center';
-    if (state === 'menu') {
-      ctx.fillStyle = 'rgba(255,255,255,0.95)';
-      ctx.font = '800 64px system-ui, sans-serif';
-      ctx.fillText('STACK', W / 2, H * 0.35);
-      ctx.font = '400 20px system-ui, sans-serif';
-      ctx.fillStyle = 'rgba(255,255,255,0.7)';
-      const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 400);
+    if (state === 'splash') {
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(0, 0, W, H);
+
+      ctx.fillStyle = 'rgba(255,255,255,0.98)';
+      ctx.font = '800 58px system-ui, sans-serif';
+      ctx.fillText('STACKERJACK', W / 2, H * 0.32);
+
+      ctx.font = '600 18px system-ui, sans-serif';
+      ctx.fillStyle = '#00e5ff';
+      ctx.fillText('ONLINE LEADERBOARD EDITION', W / 2, H * 0.32 + 36);
+
+      const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 350);
       ctx.globalAlpha = pulse;
-      ctx.fillText('tap / click / space to start', W / 2, H * 0.35 + 44);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 22px system-ui, sans-serif';
+      ctx.fillText('TAP TO START', W / 2, H * 0.52);
       ctx.globalAlpha = 1;
+
       if (best > 0) {
-        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
         ctx.font = '500 18px system-ui, sans-serif';
-        ctx.fillText('best: ' + best, W / 2, H * 0.35 + 80);
+        ctx.fillText('YOUR BEST: ' + best, W / 2, H * 0.52 + 45);
       }
+    } else if (state === 'countdown') {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(0, 0, W, H);
+
+      const elapsed = performance.now() - countdownStartTime;
+      const phaseElapsed = elapsed % 1000;
+      const scale = 1 + Math.max(0, (300 - phaseElapsed) / 300) * 0.5; // pop effect
+
+      ctx.save();
+      ctx.translate(W / 2, H * 0.45);
+      ctx.scale(scale, scale);
+
+      ctx.fillStyle = countdownVal === 3 ? '#00e5ff' : (countdownVal === 2 ? '#e040fb' : '#ffee58');
+      ctx.font = '900 96px system-ui, sans-serif';
+      ctx.fillText(countdownVal, 0, 0);
+      ctx.restore();
     } else {
       ctx.fillStyle = 'rgba(255,255,255,0.92)';
       ctx.font = '800 64px system-ui, sans-serif';
       ctx.fillText(score, W / 2, H * 0.16);
 
       if (state === 'over') {
-        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
         ctx.fillRect(0, 0, W, H);
         ctx.fillStyle = '#fff';
         ctx.font = '800 40px system-ui, sans-serif';
@@ -457,11 +536,20 @@
   function press() {
     if (isModalOpen()) return;
     
-    if (state === 'menu') state = 'playing';
-    else if (state === 'playing') place();
-    else if (state === 'over' && performance.now() - overTime > 500) {
-      reset(); state = 'playing';
+    if (state === 'splash') {
+      startCountdown();
+    } else if (state === 'playing') {
+      place();
+    } else if (state === 'over' && performance.now() - overTime > 500) {
+      startCountdown();
     }
+  }
+
+  function startCountdown() {
+    reset();
+    state = 'countdown';
+    countdownVal = 3;
+    countdownStartTime = performance.now();
   }
 
   window.addEventListener('pointerdown', e => { 
@@ -717,7 +805,7 @@
   // ---- Initial Boot ----
   updateBadge();
   fetchScores();
-  state = 'menu';
+  state = 'splash';
   reset();
   (function loop() { update(); draw(); requestAnimationFrame(loop); })();
 })();
