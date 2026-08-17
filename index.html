@@ -220,38 +220,66 @@
   function placeSplash() {
     const t = topBlock(), c = current;
     
-    // Occasionally chop off bits so it doesn't look artificially perfect every time
-    const chopChance = Math.random();
-    if (chopChance < 0.35 && c.width > 50) {
-      // deliberately misalign slightly to cut a piece off
-      const offsetAmt = (Math.random() * 16 - 8);
-      c.x += offsetAmt;
+    // Slower speed for demo
+    speed = 1.6;
+
+    // Find highest score from scoreToPlayer or default to 15-20 as target height
+    let targetHeight = 15;
+    const scores = Object.keys(scoreToPlayer).map(s => parseInt(s, 10)).filter(s => !isNaN(s));
+    if (scores.length > 0) {
+      targetHeight = Math.max(...scores);
     }
+
+    // Calculate gradual trimming so width reduces slowly as it climbs toward targetHeight
+    const currentHeight = stack.length;
+    let targetWidth = t.width;
+    if (currentHeight < targetHeight) {
+      // Reduce width proportionally to reach ~min width (e.g. 80px) at targetHeight
+      const reduction = (baseWidth - 80) / targetHeight;
+      targetWidth = Math.max(80, baseWidth - (currentHeight * reduction));
+    }
+
+    // Position current block so it cuts off a piece to match targetWidth
+    // We want the overlap width to be targetWidth
+    const maxOffset = (t.width - targetWidth);
+    const offsetAmt = maxOffset > 0 ? (Math.random() * maxOffset * 0.5 + maxOffset * 0.25) : 0;
+    
+    if (c.dir === 1) {
+      c.x = t.x + offsetAmt;
+    } else {
+      c.x = (t.x + t.width) - targetWidth - offsetAmt;
+    }
+    c.width = t.width; // keep full width moving, overlap will trim
 
     const oStart = Math.max(c.x, t.x);
     const oEnd   = Math.min(c.x + c.width, t.x + t.width);
     const oW     = oEnd - oStart;
     const slot   = stack.length * BLOCK_H;
 
-    if (oW <= 0 || stack.length > 25) { // let it stack higher (up to 25) before restarting demo
+    if (oW <= 0 || currentHeight >= targetHeight + 2) { 
       reset();
       state = 'splash';
       return;
     }
 
     nextDir *= -1;
-    const delta = c.width - oW;
-    let nx, nw;
+    const nx = oStart;
+    const nw = oW;
 
-    if (delta <= 6 && chopChance >= 0.35) { 
-      nx = t.x; nw = t.width;
-    } else {
-      nx = oStart; nw = oW;
+    // Create falling debris for cut off pieces!
+    if (c.x < oStart) {
+      debris.push({ x: c.x, y: slot, w: oStart - c.x, h: BLOCK_H,
+                    vx: -2.0 - Math.random(), vy: 2.0, rot: 0,
+                    vr: -(Math.random() * 0.1 + 0.02), hue: c.hue });
+    }
+    if (c.x + c.width > oEnd) {
+      debris.push({ x: oEnd, y: slot, w: (c.x + c.width) - oEnd, h: BLOCK_H,
+                    vx: 2.0 + Math.random(), vy: 2.0, rot: 0,
+                    vr: (Math.random() * 0.1 + 0.02), hue: c.hue });
     }
 
     stack.push({ x: nx, width: nw, hue: c.hue });
     score++;
-    speed = Math.min(2.4 + score * 0.16, 7.5);
     spawnCurrent();
   }
 
@@ -405,7 +433,7 @@
       if (sVal <= 0) continue;
       
       // The top of the block with height sVal is at world bottom = sVal * BLOCK_H + BLOCK_H
-      const worldTop = (sVal + 2) * BLOCK_H; // Add 1 to move down one block (or higher position visually)
+      const worldTop = (sVal + 1) * BLOCK_H; // Add 1 to move down one block (or higher position visually)
       const sy = H - BOTTOM_PAD - worldTop + offset;
       
       // Render only if on-screen
@@ -445,7 +473,7 @@
       const b = stack[i];
       drawBlock(b.x, i * BLOCK_H, b.width, b.hue);
     }
-    if (current && state !== 'over')
+    if (current && state !== 'over' && state !== 'countdown')
       drawBlock(current.x, stack.length * BLOCK_H, current.width, current.hue);
     for (const d of debris) drawDebris(d);
 
@@ -501,19 +529,26 @@
         ctx.fillText('YOUR BEST: ' + best, W / 2, H * 0.52 + 45);
       }
     } else if (state === 'countdown') {
-      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillStyle = 'rgba(0,0,0,0.65)';
       ctx.fillRect(0, 0, W, H);
 
       const elapsed = performance.now() - countdownStartTime;
       const phaseElapsed = elapsed % 1000;
-      const scale = 1 + Math.max(0, (300 - phaseElapsed) / 300) * 0.5; // pop effect
+      const scale = 1 + Math.max(0, (300 - phaseElapsed) / 300) * 0.6; // strong arcade pop
 
       ctx.save();
       ctx.translate(W / 2, H * 0.45);
       ctx.scale(scale, scale);
 
-      ctx.fillStyle = countdownVal === 3 ? '#00e5ff' : (countdownVal === 2 ? '#e040fb' : '#ffee58');
-      ctx.font = '900 96px system-ui, sans-serif';
+      // Complementary neon colors
+      const hue = topBlock().hue;
+      ctx.fillStyle = `hsl(${(hue + 180) % 360}, 100%, 70%)`;
+      ctx.shadowColor = `hsl(${(hue + 180) % 360}, 100%, 50%)`;
+      ctx.shadowBlur = 25;
+      
+      ctx.font = '900 110px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
       ctx.fillText(countdownVal, 0, 0);
       ctx.restore();
     } else {
