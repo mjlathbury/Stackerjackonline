@@ -342,7 +342,7 @@
       if (sVal <= 0) continue;
       
       // The top of the block with height sVal is at world bottom = sVal * BLOCK_H + BLOCK_H
-      const worldTop = (sVal - 1) * BLOCK_H; // Subtract 1 to move up one block
+      const worldTop = (sVal + 1) * BLOCK_H; // Add 1 to move down one block (or higher position visually)
       const sy = H - BOTTOM_PAD - worldTop + offset;
       
       // Render only if on-screen
