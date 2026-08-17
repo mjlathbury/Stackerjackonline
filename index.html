@@ -219,12 +219,21 @@
   
   function placeSplash() {
     const t = topBlock(), c = current;
+    
+    // Occasionally chop off bits so it doesn't look artificially perfect every time
+    const chopChance = Math.random();
+    if (chopChance < 0.35 && c.width > 50) {
+      // deliberately misalign slightly to cut a piece off
+      const offsetAmt = (Math.random() * 16 - 8);
+      c.x += offsetAmt;
+    }
+
     const oStart = Math.max(c.x, t.x);
     const oEnd   = Math.min(c.x + c.width, t.x + t.width);
     const oW     = oEnd - oStart;
     const slot   = stack.length * BLOCK_H;
 
-    if (oW <= 0 || stack.length > 15) { // reset demo stack if too high or missed
+    if (oW <= 0 || stack.length > 25) { // let it stack higher (up to 25) before restarting demo
       reset();
       state = 'splash';
       return;
@@ -234,7 +243,7 @@
     const delta = c.width - oW;
     let nx, nw;
 
-    if (delta <= 6) { 
+    if (delta <= 6 && chopChance >= 0.35) { 
       nx = t.x; nw = t.width;
     } else {
       nx = oStart; nw = oW;
@@ -396,7 +405,7 @@
       if (sVal <= 0) continue;
       
       // The top of the block with height sVal is at world bottom = sVal * BLOCK_H + BLOCK_H
-      const worldTop = (sVal + 1) * BLOCK_H; // Add 1 to move down one block (or higher position visually)
+      const worldTop = (sVal + 2) * BLOCK_H; // Add 1 to move down one block (or higher position visually)
       const sy = H - BOTTOM_PAD - worldTop + offset;
       
       // Render only if on-screen
