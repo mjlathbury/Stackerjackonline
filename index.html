@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>STACK - Online Leaderboard Edition</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #111; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; -webkit-tap-highlight-color: transparent; }
+  
+  /* Input Modal styling */
+  #name-modal {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0,0,0,0.85);
+    z-index: 10;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui, sans-serif;
+    color: white;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  .modal-box {
+    background: #1e1e1e;
+    padding: 30px;
+    border-radius: 16px;
+    border: 2px solid #e040fb;
+    width: 100%;
+    max-width: 320px;
+    text-align: center;
+    box-shadow: 0 10px 30px rgba(224, 64, 251, 0.2);
+  }
+  .modal-box h2 {
+    margin: 0 0 10px 0;
+    font-size: 26px;
+    font-weight: 900;
+    letter-spacing: 1.5px;
+    background: linear-gradient(45deg, #e040fb, #00e5ff);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .modal-box p {
+    margin: 0 0 20px 0;
+    font-size: 14px;
+    color: #aaa;
+    line-height: 1.4;
+  }
+  .modal-box input {
+    width: 100%;
+    padding: 14px;
+    border-radius: 8px;
+    border: 2px solid #444;
+    background: #111;
+    color: white;
+    font-size: 20px;
+    font-weight: bold;
+    text-align: center;
+    outline: none;
+    margin-bottom: 15px;
+    box-sizing: border-box;
+    text-transform: uppercase;
+    transition: border-color 0.2s;
+  }
+  .modal-box input:focus {
+    border-color: #00e5ff;
+  }
+  .modal-box button {
+    width: 100%;
+    padding: 14px;
+    border-radius: 8px;
+    border: none;
+    background: linear-gradient(45deg, #e040fb, #00e5ff);
+    color: white;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+  }
+  .modal-box button:active {
+    transform: scale(0.98);
+  }
+  .modal-box button:hover {
+    opacity: 0.95;
+  }
+  .error-msg {
+    color: #ff4a4a;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 15px;
+    min-height: 18px;
+  }
+  
+  /* Player Badge */
+  #player-profile-badge {
+    position: absolute;
+    bottom: 15px;
+    left: 15px;
+    font-family: system-ui, sans-serif;
+    color: rgba(255,255,255,0.6);
+    font-size: 12px;
+    font-weight: bold;
+    background: rgba(0,0,0,0.5);
+    padding: 8px 16px;
+    border-radius: 20px;
+    cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.15);
+    z-index: 5;
+    transition: background 0.2s, border-color 0.2s;
+  }
+  #player-profile-badge:hover {
+    background: rgba(0,0,0,0.7);
+    border-color: rgba(255,255,255,0.3);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="c"></canvas>
+
+<!-- Profile Badge -->
+<div id="player-profile-badge">
+  PLAYER: <span id="player-badge-name" style="color: #00e5ff;">GUEST</span> (tap to edit)
+</div>
+
+<!-- Name Modal -->
+<div id="name-modal">
+  <div class="modal-box">
+    <h2 id="modal-title">HIGH SCORE!</h2>
+    <p id="modal-desc">Enter your name for the online leaderboard:</p>
+    <input type="text" id="player-name-input" maxlength="10" placeholder="YOUR NAME" autocomplete="off" spellcheck="false">
+    <div id="name-error" class="error-msg"></div>
+    <button id="submit-name-btn">SUBMIT</button>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ---- Firebase Realtime Database Config ----
+  const dbUrl = "https://stackerjack-f09ef-default-rtdb.europe-west1.firebasedatabase.app/";
+  
+  const useDatabase = dbUrl && dbUrl !== "YOUR_DATABASE_URL";
+
+  // ---- Mock Online Leaderboard Fallback ----
+  let localScores = [
+    { name: 'HERMES', score: 18, timestamp: Date.now() - 100000 },
+    { name: 'MJL', score: 12, timestamp: Date.now() - 50000 },
+    { name: 'CHAMP', score: 5, timestamp: Date.now() - 20000 }
+  ];
+
+  // ---- Offensive Word Filtering List ----
+  const badWords = [
+    'fuck', 'shit', 'ass', 'cunt', 'bitch', 'dick', 'pussy', 'bastard', 
+    'cock', 'wank', 'twat', 'slut', 'whore', 'nigger', 'faggot', 'kike', 
+    'chink', 'retard', 'dyke', 'rape', 'pedophile'
+  ];
+
+  function isOffensive(name) {
+    const lower = name.toLowerCase();
+    return badWords.some(word => lower.includes(word));
+  }
+
+  // ---- Canvas Game Engine ----
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  let W, H, dpr;
+
+  const BLOCK_H   = 34;   // height of each block
+  const BOTTOM_PAD= 90;   // gap below the base block
+  const PERFECT   = 6;    // px tolerance for a "perfect" drop
+
+  let stack, current, debris, floaters, particles;
+  let offset, score, best, state, speed, shake, overTime, nextDir, baseWidth, perfectCombo;
+  best = parseInt(localStorage.getItem('stack_best') || '0', 10);
+
+  // High Scores Mapping
+  let scoreToPlayer = {};
+  let pendingScoreSubmit = null;
+  let isChangingNameOnly = false;
+
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  const toScreenY = (worldBottom, h = 0) => H - BOTTOM_PAD - (worldBottom + h) + offset;
+  const topBlock = () => stack[stack.length - 1];
+
+  function reset() {
+    baseWidth = Math.min(W * 0.6, 320);
+    const hue = Math.random() * 360;
+    stack = [{ x: (W - baseWidth) / 2, width: baseWidth, hue }];
+    score = 0; speed = 2.4; shake = 0; offset = 0; perfectCombo = 0;
+    nextDir = Math.random() < 0.5 ? 1 : -1;
+    debris = []; floaters = []; particles = [];
+    spawnCurrent();
+  }
+
+  function spawnCurrent() {
+    const t = topBlock();
+    current = {
+      width: t.width,
+      hue: (t.hue + 6) % 360,
+      dir: nextDir,
+      x: nextDir === 1 ? 10 : W - 10 - t.width
+    };
+  }
+
+  function place() {
+    const t = topBlock(), c = current;
+    const oStart = Math.max(c.x, t.x);
+    const oEnd   = Math.min(c.x + c.width, t.x + t.width);
+    const oW     = oEnd - oStart;
+    const slot   = stack.length * BLOCK_H;
+
+    if (oW <= 0) { // missed entirely
+      debris.push({ x: c.x, y: slot, w: c.width, h: BLOCK_H,
+                    vx: c.dir * 2.5, vy: 2, rot: 0,
+                    vr: (Math.random() * 0.1 - 0.05), hue: c.hue });
+      current = null;
+      doGameOver();
+      return;
+    }
+
+    nextDir *= -1;
+    const delta = c.width - oW;
+    let nx, nw;
+
+    if (delta <= PERFECT) { // perfect snap -> keep full width
+      nx = t.x; nw = t.width;
+      perfectCombo++;
+      perfectFx(slot, c.x + c.width / 2, c.hue);
+    } else {
+      nx = oStart; nw = oW;
+      perfectCombo = 0;
+      if (c.x < oStart)
+        debris.push({ x: c.x, y: slot, w: oStart - c.x, h: BLOCK_H,
+                      vx: -1.5 - Math.random(), vy: 1.5, rot: 0,
+                      vr: -(Math.random() * 0.08 + 0.02), hue: c.hue });
+      if (c.x + c.width > oEnd)
+        debris.push({ x: oEnd, y: slot, w: c.x + c.width - oEnd, h: BLOCK_H,
+                      vx: 1.5 + Math.random(), vy: 1.5, rot: 0,
+                      vr: (Math.random() * 0.08 + 0.02), hue: c.hue });
+    }
+
+    stack.push({ x: nx, width: nw, hue: c.hue });
+    score++;
+    if (score > best) { best = score; localStorage.setItem('stack_best', best); }
+    speed = Math.min(2.4 + score * 0.16, 7.5);
+    spawnCurrent();
+  }
+
+  function perfectFx(worldY, cx, hue) {
+    floaters.push({
+      text: perfectCombo > 1 ? 'PERFECT x' + perfectCombo : 'PERFECT',
+      x: cx, y: worldY + BLOCK_H, life: 1, hue
+    });
+    for (let i = 0; i < 18; i++) {
+      const a = Math.random() * Math.PI * 2, s = 2 + Math.random() * 3;
+      particles.push({ x: cx, y: worldY + BLOCK_H / 2,
+                       vx: Math.cos(a) * s, vy: Math.sin(a) * s + 1,
+                       life: 1, hue });
+    }
+  }
+
+  function doGameOver() { 
+    state = 'over'; 
+    overTime = performance.now(); 
+    shake = 1; 
+    handleGameOverScore();
+  }
+
+  // ---- Update ----
+  function update() {
+    const N = stack.length;
+    let target = H * 0.58 - H + BOTTOM_PAD + (N + 1) * BLOCK_H;
+    if (target < 0) target = 0;
+    offset += (target - offset) * 0.12;
+
+    if (state === 'playing' && current) {
+      current.x += current.dir * speed;
+      const minX = 10, maxX = W - 10 - current.width;
+      if (current.x <= minX) { current.x = minX; current.dir = 1; }
+      else if (current.x >= maxX) { current.x = maxX; current.dir = -1; }
+    }
+
+    for (let i = debris.length - 1; i >= 0; i--) {
+      const d = debris[i];
+      d.x += d.vx; d.y += d.vy; d.vy -= 0.5; d.rot += d.vr;
+      if (toScreenY(d.y, d.h) > H + 150) debris.splice(i, 1);
+    }
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const p = particles[i];
+      p.x += p.vx; p.y += p.vy; p.vy -= 0.35; p.life -= 0.03;
+      if (p.life <= 0) particles.splice(i, 1);
+    }
+    for (let i = floaters.length - 1; i >= 0; i--) {
+      const f = floaters[i];
+      f.y += 1.2; f.life -= 0.02;
+      if (f.life <= 0) floaters.splice(i, 1);
+    }
+    if (shake > 0) shake *= 0.9;
+  }
+
+  // ---- Draw ----
+  function drawBlock(x, worldBottom, w, hue) {
+    const y = toScreenY(worldBottom, BLOCK_H);
+    const grad = ctx.createLinearGradient(0, y, 0, y + BLOCK_H);
+    grad.addColorStop(0, `hsl(${hue},62%,60%)`);
+    grad.addColorStop(1, `hsl(${hue},62%,46%)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y, w, BLOCK_H);
+    ctx.fillStyle = `hsl(${hue},70%,74%)`;
+    ctx.fillRect(x, y, w, 3); // top highlight
+  }
+
+  function drawDebris(d) {
+    const y = toScreenY(d.y, d.h);
+    ctx.save();
+    ctx.translate(d.x + d.w / 2, y + d.h / 2);
+    ctx.rotate(d.rot);
+    ctx.fillStyle = `hsl(${d.hue},62%,52%)`;
+    ctx.fillRect(-d.w / 2, -d.h / 2, d.w, d.h);
+    ctx.restore();
+  }
+
+  // Draw Dotted High Score Marks at the TOP of the brick of that score
+  function drawHighScoreLines() {
+    ctx.save();
+    for (const [scoreStr, name] of Object.entries(scoreToPlayer)) {
+      const sVal = parseInt(scoreStr, 10);
+      if (sVal <= 0) continue;
+      
+      // The top of the block with height sVal is at world bottom = sVal * BLOCK_H + BLOCK_H
+      const worldTop = (sVal - 1) * BLOCK_H; // Subtract 1 to move up one block
+      const sy = H - BOTTOM_PAD - worldTop + offset;
+      
+      // Render only if on-screen
+      if (sy > 0 && sy < H) {
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 6]);
+        
+        ctx.beginPath();
+        ctx.moveTo(10, sy);
+        ctx.lineTo(W - 10, sy);
+        ctx.stroke();
+        
+        // Draw the badge marker on the right edge
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+        ctx.font = 'bold 12px system-ui, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(`🚩 ${name} (${sVal})`, W - 15, sy - 5);
+      }
+    }
+    ctx.restore();
+  }
+
+  function draw() {
+    const hue = topBlock().hue;
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, `hsl(${hue},45%,13%)`);
+    g.addColorStop(1, `hsl(${hue},50%,22%)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    if (shake > 0.01)
+      ctx.translate((Math.random() - 0.5) * shake * 14, (Math.random() - 0.5) * shake * 14);
+
+    for (let i = 0; i < stack.length; i++) {
+      const b = stack[i];
+      drawBlock(b.x, i * BLOCK_H, b.width, b.hue);
+    }
+    if (current && state !== 'over')
+      drawBlock(current.x, stack.length * BLOCK_H, current.width, current.hue);
+    for (const d of debris) drawDebris(d);
+
+    // Draw the high score milestones directly in the world space at the top of the target brick
+    drawHighScoreLines();
+
+    for (const p of particles) {
+      ctx.globalAlpha = Math.max(p.life, 0);
+      ctx.fillStyle = `hsl(${p.hue},70%,65%)`;
+      const sy = H - BOTTOM_PAD - p.y + offset;
+      ctx.fillRect(p.x - 3, sy - 3, 6, 6);
+    }
+    ctx.globalAlpha = 1;
+
+    for (const f of floaters) {
+      ctx.globalAlpha = Math.max(f.life, 0);
+      ctx.fillStyle = `hsl(${f.hue},80%,75%)`;
+      ctx.font = '700 22px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      const sy = H - BOTTOM_PAD - f.y + offset;
+      ctx.fillText(f.text, f.x, sy);
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    drawUI();
+  }
+
+  function drawUI() {
+    ctx.textAlign = 'center';
+    if (state === 'menu') {
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.font = '800 64px system-ui, sans-serif';
+      ctx.fillText('STACK', W / 2, H * 0.35);
+      ctx.font = '400 20px system-ui, sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      const pulse = 0.6 + 0.4 * Math.sin(performance.now() / 400);
+      ctx.globalAlpha = pulse;
+      ctx.fillText('tap / click / space to start', W / 2, H * 0.35 + 44);
+      ctx.globalAlpha = 1;
+      if (best > 0) {
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = '500 18px system-ui, sans-serif';
+        ctx.fillText('best: ' + best, W / 2, H * 0.35 + 80);
+      }
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.font = '800 64px system-ui, sans-serif';
+      ctx.fillText(score, W / 2, H * 0.16);
+
+      if (state === 'over') {
+        ctx.fillStyle = 'rgba(0,0,0,0.45)';
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = '#fff';
+        ctx.font = '800 40px system-ui, sans-serif';
+        ctx.fillText('Game Over', W / 2, H * 0.4);
+        ctx.font = '500 24px system-ui, sans-serif';
+        ctx.fillText('score: ' + score + '   best: ' + best, W / 2, H * 0.4 + 44);
+
+        if (performance.now() - overTime > 500 && !isModalOpen()) {
+          const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 350);
+          ctx.globalAlpha = pulse;
+          ctx.font = '400 20px system-ui, sans-serif';
+          ctx.fillText('tap to play again', W / 2, H * 0.4 + 92);
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+  }
+
+  // ---- Input & Interaction ----
+  function press() {
+    if (isModalOpen()) return;
+    
+    if (state === 'menu') state = 'playing';
+    else if (state === 'playing') place();
+    else if (state === 'over' && performance.now() - overTime > 500) {
+      reset(); state = 'playing';
+    }
+  }
+
+  window.addEventListener('pointerdown', e => { 
+    if (e.target.closest('#player-profile-badge') || e.target.closest('#name-modal')) return;
+    e.preventDefault(); 
+    press(); 
+  });
+
+  window.addEventListener('keydown', e => {
+    if (isModalOpen()) return;
+    if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); press(); }
+  });
+
+  // ---- Database Scoring Operations ----
+  async function fetchScores() {
+    if (useDatabase) {
+      try {
+        const response = await fetch(`${dbUrl}scores.json`);
+        const data = await response.json();
+        
+        const fetched = [];
+        if (data) {
+          Object.keys(data).forEach(key => {
+            if (data[key] && data[key].name && typeof data[key].score === 'number') {
+              fetched.push(data[key]);
+            }
+          });
+        }
+        
+        // Each person's name appears only once with their top score
+        const playerTopMap = {};
+        for (const entry of fetched) {
+          const name = entry.name.toUpperCase();
+          const score = parseInt(entry.score, 10);
+          const timestamp = entry.timestamp || 0;
+
+          if (!playerTopMap[name] || score > playerTopMap[name].score || (score === playerTopMap[name].score && timestamp > playerTopMap[name].timestamp)) {
+            playerTopMap[name] = { name: name, score: score, timestamp: timestamp };
+          }
+        }
+
+        const uniquePlayerScores = Object.values(playerTopMap);
+
+        // Sort descending by score, then descending by timestamp (last person first for ties)
+        uniquePlayerScores.sort((a, b) => {
+          if (b.score !== a.score) {
+            return b.score - a.score;
+          }
+          return b.timestamp - a.timestamp;
+        });
+
+        processScores(uniquePlayerScores);
+      } catch (err) {
+        console.error("Error fetching online scores via REST API:", err);
+      }
+    } else {
+      const stored = localStorage.getItem('stack_online_scores_mock');
+      if (stored) {
+        localScores = JSON.parse(stored);
+      } else {
+        localStorage.setItem('stack_online_scores_mock', JSON.stringify(localScores));
+      }
+      
+      const playerTopMap = {};
+      for (const entry of localScores) {
+        const name = entry.name.toUpperCase();
+        const score = parseInt(entry.score, 10);
+        const timestamp = entry.timestamp || 0;
+        if (!playerTopMap[name] || score > playerTopMap[name].score || (score === playerTopMap[name].score && timestamp > playerTopMap[name].timestamp)) {
+          playerTopMap[name] = { name: name, score: score, timestamp: timestamp };
+        }
+      }
+      const uniquePlayerScores = Object.values(playerTopMap);
+      uniquePlayerScores.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return b.timestamp - a.timestamp;
+      });
+      processScores(uniquePlayerScores);
+    }
+  }
+
+  function processScores(scoreList) {
+    scoreToPlayer = {};
+    for (const entry of scoreList) {
+      const s = parseInt(entry.score, 10);
+      if (!scoreToPlayer[s]) {
+        scoreToPlayer[s] = entry.name;
+      }
+    }
+  }
+
+  async function submitScore(name, scoreToSave) {
+    if (useDatabase) {
+      try {
+        await fetch(`${dbUrl}scores.json`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: name,
+            score: scoreToSave,
+            timestamp: Date.now()
+          })
+        });
+        await fetchScores();
+      } catch (err) {
+        console.error("Error submitting score online:", err);
+      }
+    } else {
+      localScores.push({ name: name, score: scoreToSave, timestamp: Date.now() });
+      localStorage.setItem('stack_online_scores_mock', JSON.stringify(localScores));
+      
+      const playerTopMap = {};
+      for (const entry of localScores) {
+        const n = entry.name.toUpperCase();
+        const sc = parseInt(entry.score, 10);
+        const ts = entry.timestamp || 0;
+        if (!playerTopMap[n] || sc > playerTopMap[n].score || (sc === playerTopMap[n].score && ts > playerTopMap[n].timestamp)) {
+          playerTopMap[n] = { name: n, score: sc, timestamp: ts };
+        }
+      }
+      const uniquePlayerScores = Object.values(playerTopMap);
+      uniquePlayerScores.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return b.timestamp - a.timestamp;
+      });
+      processScores(uniquePlayerScores);
+    }
+  }
+
+  function handleGameOverScore() {
+    if (score <= 0) return;
+    
+    const savedName = localStorage.getItem('stack_player_name');
+    if (savedName) {
+      submitScore(savedName, score);
+    } else {
+      pendingScoreSubmit = score;
+      isChangingNameOnly = false;
+      showNameModal();
+    }
+  }
+
+  // ---- Name Modal Overlay System ----
+  const modal = document.getElementById('name-modal');
+  const modalTitle = document.getElementById('modal-title');
+  const modalDesc = document.getElementById('modal-desc');
+  const nameInput = document.getElementById('player-name-input');
+  const nameError = document.getElementById('name-error');
+  const submitBtn = document.getElementById('submit-name-btn');
+  const badgeName = document.getElementById('player-badge-name');
+  const profileBadge = document.getElementById('player-profile-badge');
+
+  function isModalOpen() {
+    return modal.style.display === 'flex';
+  }
+
+  function showNameModal() {
+    modal.style.display = 'flex';
+    nameInput.focus();
+    nameError.style.display = 'none';
+    nameError.innerText = '';
+    
+    if (isChangingNameOnly) {
+      modalTitle.innerText = "CHANGE NAME";
+      modalDesc.innerText = "Enter your new player name:";
+      nameInput.value = localStorage.getItem('stack_player_name') || "";
+    } else {
+      modalTitle.innerText = "NEW HIGH SCORE!";
+      modalDesc.innerText = `You scored ${pendingScoreSubmit}! Enter your name:`;
+      nameInput.value = "";
+    }
+  }
+
+  function hideNameModal() {
+    modal.style.display = 'none';
+    pendingScoreSubmit = null;
+    isChangingNameOnly = false;
+  }
+
+  function updateBadge() {
+    const name = localStorage.getItem('stack_player_name') || 'GUEST';
+    badgeName.innerText = name;
+  }
+
+  nameInput.addEventListener('keypress', (e) => {
+    const charCode = e.charCode || e.keyCode;
+    const isLetter = (charCode >= 65 && charCode <= 90) || (charCode >= 97 && charCode <= 122);
+    if (!isLetter) {
+      e.preventDefault();
+      showError("Only letters (A-Z) allowed");
+    }
+  });
+
+  nameInput.addEventListener('input', () => {
+    const rawVal = nameInput.value;
+    const cleanVal = rawVal.replace(/[^a-zA-Z]/g, '').toUpperCase();
+    if (rawVal !== cleanVal) {
+      showError("Only letters (A-Z) allowed");
+    } else {
+      hideError();
+    }
+    nameInput.value = cleanVal;
+  });
+
+  function showError(msg) {
+    nameError.innerText = msg;
+    nameError.style.display = 'block';
+  }
+
+  function hideError() {
+    nameError.innerText = '';
+    nameError.style.display = 'none';
+  }
+
+  async function handleNameSubmit() {
+    const name = nameInput.value.trim().toUpperCase();
+    
+    if (name.length < 2) {
+      showError("Name must be at least 2 letters");
+      return;
+    }
+    if (isOffensive(name)) {
+      showError("Please choose a nicer name!");
+      return;
+    }
+
+    localStorage.setItem('stack_player_name', name);
+    updateBadge();
+
+    if (!isChangingNameOnly && pendingScoreSubmit !== null) {
+      await submitScore(name, pendingScoreSubmit);
+    }
+    
+    hideNameModal();
+  }
+
+  submitBtn.addEventListener('click', handleNameSubmit);
+  
+  nameInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleNameSubmit();
+    }
+  });
+
+  profileBadge.addEventListener('click', () => {
+    isChangingNameOnly = true;
+    showNameModal();
+  });
+
+  // ---- Initial Boot ----
+  updateBadge();
+  fetchScores();
+  state = 'menu';
+  reset();
+  (function loop() { update(); draw(); requestAnimationFrame(loop); })();
+})();
+</script>
+</body>
+</html>
